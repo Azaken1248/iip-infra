@@ -1,0 +1,143 @@
+services:
+  kafka:
+    image: apache/kafka:4.3.1
+    hostname: kafka
+    container_name: iip-kafka
+    ports:
+      - "${KAFKA_HOST_PORT:-9092}:9092" # host access only; other containers use kafka:19092
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: "CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT"
+      KAFKA_ADVERTISED_LISTENERS: "PLAINTEXT_HOST://localhost:9092,PLAINTEXT://kafka:19092"
+      KAFKA_PROCESS_ROLES: "broker,controller"
+      KAFKA_CONTROLLER_QUORUM_VOTERS: "1@kafka:29093"
+      KAFKA_LISTENERS: "CONTROLLER://:29093,PLAINTEXT_HOST://:9092,PLAINTEXT://:19092"
+      KAFKA_INTER_BROKER_LISTENER_NAME: "PLAINTEXT"
+      KAFKA_CONTROLLER_LISTENER_NAMES: "CONTROLLER"
+      CLUSTER_ID: "4L6g3nShT-eMCtK--X86sw"
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_LOG_DIRS: "/tmp/kraft-combined-logs"
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server localhost:9092 >/dev/null 2>&1"]
+      interval: 10s
+      timeout: 10s
+      retries: 15
+      start_period: 20s
+    networks: [iip]
+
+  kafka-topics-init:
+    image: apache/kafka:4.3.1
+    container_name: iip-kafka-topics-init
+    depends_on:
+      kafka:
+        condition: service_healthy
+    entrypoint: ["/bin/bash", "-c"]
+    command: >
+      "
+      /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:19092 --create --if-not-exists --topic intern.created --partitions 3 --replication-factor 1 &&
+      /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:19092 --create --if-not-exists --topic intern.dlq --partitions 1 --replication-factor 1
+      "
+    networks: [iip]
+
+  kafka-ui:
+    image: ghcr.io/kafbat/kafka-ui:latest
+    container_name: iip-kafka-ui
+    ports:
+      - "${KAFKA_UI_HOST_PORT:-8090}:8080"
+    environment:
+      KAFKA_CLUSTERS_0_NAME: iip
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:19092
+    depends_on:
+      kafka:
+        condition: service_healthy
+    networks: [iip]
+
+  postgres:
+    image: postgres:17-alpine
+    container_name: iip-postgres
+    environment:
+      POSTGRES_DB: iip
+      POSTGRES_USER: iip
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-iip}
+    ports:
+      - "${POSTGRES_HOST_PORT:-5433}:5432" # host-side only; containers use postgres:5432
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./postgres/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U iip -d iip"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks: [iip]
+
+  source-service:
+    build:
+      context: ../source-service
+    container_name: iip-source-service
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: kafka:19092
+      SERVER_PORT: 8080
+    ports:
+      - "${SOURCE_SERVICE_HOST_PORT:-8080}:8080"
+    depends_on:
+      kafka-topics-init:
+        condition: service_completed_successfully
+    networks: [iip]
+
+  db-adapter:
+    build:
+      context: ../db-adapter
+    container_name: iip-db-adapter
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: kafka:19092
+      DB_URL: jdbc:postgresql://postgres:5432/iip
+      DB_USERNAME: iip
+      DB_PASSWORD: ${POSTGRES_PASSWORD:-iip}
+      SERVER_PORT: 8081
+    ports:
+      - "${DB_ADAPTER_HOST_PORT:-8081}:8081"
+    depends_on:
+      kafka-topics-init:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+    networks: [iip]
+
+  file-adapter:
+    build:
+      context: ../file-adapter
+    container_name: iip-file-adapter
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: kafka:19092
+      SERVER_PORT: 8082
+      FILE_OUTPUT_PATH: /data/interns.csv
+      DEDUP_STORE_PATH: /data/file-adapter-dedup
+    ports:
+      - "${FILE_ADAPTER_HOST_PORT:-8082}:8082"
+    volumes:
+      - file-adapter-data:/data
+    depends_on:
+      kafka-topics-init:
+        condition: service_completed_successfully
+    networks: [iip]
+
+  ui:
+    build:
+      context: ../ui
+    container_name: iip-ui
+    ports:
+      - "${UI_HOST_PORT:-3000}:80"
+    depends_on:
+      - source-service
+    networks: [iip]
+
+networks:
+  iip:
+
+volumes:
+  postgres-data:
+  file-adapter-data:
