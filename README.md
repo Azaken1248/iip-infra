@@ -1,6 +1,6 @@
 # IIP — Infrastructure
 
-Local Docker Compose orchestration for the Intern Integration Platform's Release 1 walking skeleton — see [`docs`](../docs) for architecture, use cases, data model, and the implementation plan.
+Local Docker Compose orchestration for the Intern Integration Platform's Release 1 walking skeleton — see [`docs`](https://github.com/Azaken1248/iip-docs) for architecture, use cases, data model, and the implementation plan.
 
 This repo expects to sit alongside its sibling repos, checked out at the same level:
 
@@ -45,4 +45,4 @@ docker compose up --build
 ## Notes
 
 - `kafka-topics-init` is a stand-in for proper topic provisioning; once the services declare their own `NewTopic` beans (Spring Kafka), this can be trimmed down or removed.
-- The file adapter's dedup store and CSV output live on the named `file-adapter-data` volume — see [Architecture §4.5](../docs/01-architecture.md) for why this adapter must stay single-instance.
+- The file adapter's dedup store and CSV output live on the named `file-adapter-data` volume — see [Architecture §4.5](https://github.com/Azaken1248/iip-docs/blob/main/01-architecture.md) for why this adapter must stay single-instance.
