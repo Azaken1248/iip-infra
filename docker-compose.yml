@@ -99,6 +99,7 @@ services:
       DB_USERNAME: iip
       DB_PASSWORD: ${POSTGRES_PASSWORD:-iip}
       SERVER_PORT: 8081
+      CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-http://localhost:5173,http://localhost:3000}
     ports:
       - "${DB_ADAPTER_HOST_PORT:-8081}:8081"
     depends_on:
@@ -117,6 +118,7 @@ services:
       SERVER_PORT: 8082
       FILE_OUTPUT_PATH: /data/interns.csv
       DEDUP_STORE_PATH: /data/file-adapter-dedup
+      CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-http://localhost:5173,http://localhost:3000}
     ports:
       - "${FILE_ADAPTER_HOST_PORT:-8082}:8082"
     volumes:
