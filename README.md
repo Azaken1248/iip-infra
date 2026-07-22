@@ -42,6 +42,15 @@ docker compose up --build
 - Source Service: http://localhost:8080 (`/actuator/health`)
 - Kafka UI: http://localhost:8090
 
+## Full-pipeline proof test (`e2e-tests/`)
+
+A separate, standalone Maven project (no Spring Boot — it only orchestrates other services' containers, it doesn't run application code of its own) proving Original Specification §9's guarantee: one HTTP submission through the real Source Service lands in both real targets. It builds the actual Docker images from each service's own `Dockerfile` via Testcontainers, wires them together on one network, and asserts a Postgres row and a CSV line both appear. It lives here rather than in any single service's repo because this is the only place that's ever known how to wire all three together.
+
+```bash
+cd e2e-tests
+./mvnw test
+```
+
 ## Notes
 
 - `kafka-topics-init` is a stand-in for proper topic provisioning; once the services declare their own `NewTopic` beans (Spring Kafka), this can be trimmed down or removed.
