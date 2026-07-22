@@ -42,6 +42,21 @@ docker compose up --build
 - Source Service: http://localhost:8080 (`/actuator/health`)
 - Kafka UI: http://localhost:8090
 
+## Manual smoke test (Phase 1.21)
+
+The automated version of this lives in `e2e-tests/` (below); this is the same walkthrough by hand, useful for eyeballing the UI itself rather than just asserting on it:
+
+```bash
+cp .env.example .env
+docker compose up -d --build kafka kafka-topics-init postgres source-service db-adapter file-adapter
+```
+
+1. Open http://localhost:3000 (or `cd ../ui && npm run dev` for hot-reload instead), submit an intern.
+2. Confirm it in Postgres: `docker exec iip-postgres psql -U iip -d iip -c "SELECT * FROM interns;"`
+3. Confirm it in the CSV: `docker exec iip-file-adapter cat /data/interns.csv`
+4. Open the **Targets** tab in the UI — both targets should show *Running*, and clicking either should show the same record you just confirmed by hand above.
+5. Click **Pause** on the Database target, submit a second intern, and confirm (via the `psql` command above) it does *not* yet appear. Click **Resume** and confirm it appears within a few seconds — this is Original Specification §9's zero-data-loss guarantee, demonstrated interactively rather than just asserted in a test.
+
 ## Full-pipeline proof test (`e2e-tests/`)
 
 A separate, standalone Maven project (no Spring Boot — it only orchestrates other services' containers, it doesn't run application code of its own) proving Original Specification §9's guarantee: one HTTP submission through the real Source Service lands in both real targets. It builds the actual Docker images from each service's own `Dockerfile` via Testcontainers, wires them together on one network, and asserts a Postgres row and a CSV line both appear. It lives here rather than in any single service's repo because this is the only place that's ever known how to wire all three together.
