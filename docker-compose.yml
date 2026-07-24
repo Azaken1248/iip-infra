@@ -100,6 +100,13 @@ services:
       DB_PASSWORD: ${POSTGRES_PASSWORD:-iip}
       SERVER_PORT: 8081
       CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-http://localhost:5173,http://localhost:3000}
+      # Distinct var names per adapter (not a shared RETRY_* name) so each
+      # is genuinely independently tunable via .env -- see Release 2 Phase
+      # 2.5. The container-internal names match application.yml on both
+      # adapters; only the host-side .env names differ.
+      RETRY_MAX_ATTEMPTS: ${DB_ADAPTER_RETRY_MAX_ATTEMPTS:-3}
+      RETRY_INITIAL_BACKOFF_MS: ${DB_ADAPTER_RETRY_INITIAL_BACKOFF_MS:-200}
+      RETRY_MULTIPLIER: ${DB_ADAPTER_RETRY_MULTIPLIER:-2.0}
     ports:
       - "${DB_ADAPTER_HOST_PORT:-8081}:8081"
     depends_on:
@@ -119,6 +126,9 @@ services:
       FILE_OUTPUT_PATH: /data/interns.csv
       DEDUP_STORE_PATH: /data/file-adapter-dedup
       CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-http://localhost:5173,http://localhost:3000}
+      RETRY_MAX_ATTEMPTS: ${FILE_ADAPTER_RETRY_MAX_ATTEMPTS:-3}
+      RETRY_INITIAL_BACKOFF_MS: ${FILE_ADAPTER_RETRY_INITIAL_BACKOFF_MS:-200}
+      RETRY_MULTIPLIER: ${FILE_ADAPTER_RETRY_MULTIPLIER:-2.0}
     ports:
       - "${FILE_ADAPTER_HOST_PORT:-8082}:8082"
     volumes:
