@@ -1,5 +1,5 @@
 -- Release 1 schema for the Database Adapter (see docs/03-data-model.md §4.1).
--- record_id is the idempotency key for `intern.created` redelivery;
+-- record_id is the idempotency key for `interns.created` redelivery;
 -- intern_id is unique so a future ON CONFLICT (intern_id) DO UPDATE
 -- (Release 5, intern.updated) has a natural conflict target.
 
