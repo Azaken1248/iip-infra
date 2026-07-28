@@ -21,7 +21,7 @@ InternIntegrationPlatform/
 | `kafka` | `apache/kafka:4.3.1` (KRaft, single node) | 9092 (host), `kafka:19092` (containers) |
 | `kafka-topics-init` | same, one-shot job creating `interns.created` / `iip.dlq` | — |
 | `kafka-ui` | `ghcr.io/kafbat/kafka-ui` | 8090 |
-| `postgres` | `postgres:17-alpine`, schema from `postgres/init.sql` | 5433 (host) → 5432 (container) |
+| `postgres` | `postgres:17-alpine`, schema from `postgres/*.sql` (applied in lexical order) | 5433 (host) → 5432 (container) |
 | `source-service` | built from `../source-service` | 8080 |
 | `db-adapter` | built from `../db-adapter` | 8081 |
 | `file-adapter` | built from `../file-adapter` | 8082 |

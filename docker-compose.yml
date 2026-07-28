@@ -66,7 +66,10 @@ services:
       - "${POSTGRES_HOST_PORT:-5433}:5432" # host-side only; containers use postgres:5432
     volumes:
       - postgres-data:/var/lib/postgresql/data
-      - ./postgres/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+      # The whole directory rather than one file: initdb runs *.sql in
+      # lexical order, so the numeric prefixes are the ordering, and adding
+      # a table no longer means editing this file.
+      - ./postgres:/docker-entrypoint-initdb.d:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U iip -d iip"]
       interval: 5s
