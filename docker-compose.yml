@@ -77,6 +77,51 @@ services:
       retries: 10
     networks: [iip]
 
+  contract-registry:
+    build:
+      context: ../contract-registry
+    container_name: iip-contract-registry
+    environment:
+      DB_URL: jdbc:postgresql://postgres:5432/iip
+      DB_USERNAME: ${POSTGRES_USER:-iip}
+      DB_PASSWORD: ${POSTGRES_PASSWORD:-iip}
+      SERVER_PORT: 8083
+      CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-http://localhost:5173,http://localhost:3000}
+    ports:
+      - "${CONTRACT_REGISTRY_HOST_PORT:-8083}:8083"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks: [iip]
+
+  # Seeds the registry with the platform's contracts, the same way
+  # kafka-topics-init seeds its topics. These files are the contracts that
+  # used to be baked into the source-service image (Phase 4.4); they live
+  # here now because infra is where a deployment's starting state belongs,
+  # and POSTing them is exactly what the control-plane UI will do in
+  # Release 6 -- no privileged path, just the public API.
+  contract-registry-init:
+    image: curlimages/curl:latest
+    container_name: iip-contract-registry-init
+    depends_on:
+      contract-registry:
+        condition: service_started
+    volumes:
+      - ./contracts:/contracts:ro
+    entrypoint: ["/bin/sh", "-c"]
+    command: >
+      "
+      echo 'waiting for the contract registry...' &&
+      until curl -sf http://contract-registry:8083/actuator/health >/dev/null; do sleep 2; done &&
+      for f in /contracts/*.json; do
+      echo registering $$f;
+      curl -sS --fail-with-body -X POST http://contract-registry:8083/contracts -H 'Content-Type: application/json' --data-binary @$$f || exit 1;
+      echo;
+      done &&
+      echo 'contracts registered'
+      "
+    networks: [iip]
+
   source-service:
     build:
       context: ../source-service
@@ -85,10 +130,20 @@ services:
       KAFKA_BOOTSTRAP_SERVERS: kafka:19092
       SERVER_PORT: 8080
       CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-http://localhost:5173,http://localhost:3000}
+      # Phase 4.4: the image ships no contract files. Without these two the
+      # service falls back to reading the classpath, finds nothing, and
+      # refuses to start -- which is the intended failure, not a silent one.
+      CONTRACTS_SOURCE: registry
+      CONTRACT_REGISTRY_URL: http://contract-registry:8083
+      CONTRACT_REFRESH_INTERVAL_MS: ${CONTRACT_REFRESH_INTERVAL_MS:-30000}
     ports:
       - "${SOURCE_SERVICE_HOST_PORT:-8080}:8080"
     depends_on:
       kafka-topics-init:
+        condition: service_completed_successfully
+      # Not merely "the registry is up": the contracts have to be *in* it,
+      # or this service starts, finds an empty registry, and exits.
+      contract-registry-init:
         condition: service_completed_successfully
     networks: [iip]
 

@@ -49,12 +49,13 @@ class FullPipelineEndToEndTest {
 
 	private static GenericContainer<?> kafka;
 	private static PostgreSQLContainer postgres;
+	private static GenericContainer<?> contractRegistry;
 	private static GenericContainer<?> sourceService;
 	private static GenericContainer<?> dbAdapter;
 	private static GenericContainer<?> fileAdapter;
 
 	@BeforeAll
-	static void startThePipeline() {
+	static void startThePipeline() throws Exception {
 		// A plain GenericContainer, not Testcontainers' KafkaContainer
 		// wrapper -- that class only advertises the host-mapped address,
 		// which is meaningless for container-to-container traffic (the
@@ -90,10 +91,37 @@ class FullPipelineEndToEndTest {
 				.withDatabaseName("iip")
 				.withUsername("iip")
 				.withPassword("iip")
+				// The whole directory, in lexical order, exactly as compose
+				// mounts it -- the registry's tables come from 02-registry.sql
+				// and the contract-registry container will not start without
+				// them (ddl-auto: validate).
 				.withCopyFileToContainer(
-						MountableFile.forHostPath(Path.of("../postgres/init.sql")),
-						"/docker-entrypoint-initdb.d/init.sql");
+						MountableFile.forHostPath(Path.of("../postgres/01-interns.sql")),
+						"/docker-entrypoint-initdb.d/01-interns.sql")
+				.withCopyFileToContainer(
+						MountableFile.forHostPath(Path.of("../postgres/02-registry.sql")),
+						"/docker-entrypoint-initdb.d/02-registry.sql");
 		postgres.start();
+
+		// Release 4: the source-service has no compiled-in schema *and* no
+		// contract file. Its contracts come from here, which makes the
+		// registry a member of the pipeline this test claims to prove rather
+		// than a detail of it -- if the registry is empty or unreachable, the
+		// pipeline genuinely does not work, and the test should say so.
+		contractRegistry = new GenericContainer<>(
+				new ImageFromDockerfile("iip/contract-registry-e2e", false)
+						.withFileFromPath(".", Path.of("../../contract-registry")))
+				.withNetwork(network)
+				.withNetworkAliases("contract-registry")
+				.withExposedPorts(8083)
+				.withEnv("DB_URL", "jdbc:postgresql://postgres:5432/iip")
+				.withEnv("DB_USERNAME", "iip")
+				.withEnv("DB_PASSWORD", "iip")
+				.withEnv("SERVER_PORT", "8083")
+				.waitingFor(Wait.forHttp("/actuator/health").forPort(8083).withStartupTimeout(Duration.ofMinutes(3)));
+		contractRegistry.start();
+
+		registerTheDeploymentsContracts();
 
 		sourceService = new GenericContainer<>(
 				new ImageFromDockerfile("iip/source-service-e2e", false)
@@ -103,6 +131,8 @@ class FullPipelineEndToEndTest {
 				.withExposedPorts(8080)
 				.withEnv("KAFKA_BOOTSTRAP_SERVERS", "kafka:9092")
 				.withEnv("SERVER_PORT", "8080")
+				.withEnv("CONTRACTS_SOURCE", "registry")
+				.withEnv("CONTRACT_REGISTRY_URL", "http://contract-registry:8083")
 				.waitingFor(Wait.forHttp("/actuator/health").forPort(8080).withStartupTimeout(Duration.ofMinutes(3)));
 		sourceService.start();
 
@@ -132,11 +162,40 @@ class FullPipelineEndToEndTest {
 		fileAdapter.start();
 	}
 
+	/**
+	 * Seeds the registry through the same public {@code POST /contracts} the
+	 * compose stack's {@code contract-registry-init} job uses, from the same
+	 * {@code infra/contracts/*.json} files. Not a test fixture: it is the
+	 * deployment's starting state, and reading it from disk here is what stops
+	 * this test from proving a pipeline whose contracts differ from the one an
+	 * operator actually gets.
+	 */
+	private static void registerTheDeploymentsContracts() throws Exception {
+		HttpClient http = HttpClient.newHttpClient();
+		String registryUrl = "http://" + contractRegistry.getHost() + ":" + contractRegistry.getMappedPort(8083);
+
+		try (var files = java.nio.file.Files.list(Path.of("../contracts"))) {
+			for (Path contractFile : files.filter(f -> f.toString().endsWith(".json")).toList()) {
+				HttpResponse<String> response = http.send(
+						HttpRequest.newBuilder(URI.create(registryUrl + "/contracts"))
+								.header("Content-Type", "application/json")
+								.POST(HttpRequest.BodyPublishers.ofFile(contractFile))
+								.build(),
+						HttpResponse.BodyHandlers.ofString());
+
+				assertTrue(response.statusCode() == 200 || response.statusCode() == 201,
+						"registering " + contractFile.getFileName() + " failed with "
+								+ response.statusCode() + ": " + response.body());
+			}
+		}
+	}
+
 	@AfterAll
 	static void stopThePipeline() {
 		if (fileAdapter != null) fileAdapter.stop();
 		if (dbAdapter != null) dbAdapter.stop();
 		if (sourceService != null) sourceService.stop();
+		if (contractRegistry != null) contractRegistry.stop();
 		if (postgres != null) postgres.stop();
 		if (kafka != null) kafka.stop();
 		network.close();

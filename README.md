@@ -10,6 +10,7 @@ InternIntegrationPlatform/
 ├── infra/            <- this repo
 ├── ui/
 ├── source-service/
+├── contract-registry/
 ├── db-adapter/
 └── file-adapter/
 ```
@@ -22,6 +23,8 @@ InternIntegrationPlatform/
 | `kafka-topics-init` | same, one-shot job creating `interns.created` / `iip.dlq` | — |
 | `kafka-ui` | `ghcr.io/kafbat/kafka-ui` | 8090 |
 | `postgres` | `postgres:17-alpine`, schema from `postgres/*.sql` (applied in lexical order) | 5433 (host) → 5432 (container) |
+| `contract-registry` | built from `../contract-registry` | 8083 |
+| `contract-registry-init` | one-shot job POSTing `contracts/*.json` into the registry | — |
 | `source-service` | built from `../source-service` | 8080 |
 | `db-adapter` | built from `../db-adapter` | 8081 |
 | `file-adapter` | built from `../file-adapter` | 8082 |
@@ -40,7 +43,29 @@ docker compose up --build
 
 - UI: http://localhost:3000
 - Source Service: http://localhost:8080 (`/actuator/health`)
+- Contract Registry: http://localhost:8083 (`/contracts`)
 - Kafka UI: http://localhost:8090
+
+### Where contracts come from
+
+From Release 4 the source-service ships **no contract files**. It fetches
+them from the Contract Registry at startup and re-fetches every
+`CONTRACT_REFRESH_INTERVAL_MS`, so a contract registered while the stack is
+running goes live without a restart.
+
+`contracts/*.json` in this repo is the deployment's starting state, seeded by
+`contract-registry-init` through the same public `POST /contracts` the
+control-plane UI will use — there is no privileged back door. Adding a
+contract is therefore either dropping a file here and re-running that job, or
+POSTing it yourself:
+
+```bash
+curl -X POST http://localhost:8083/contracts \
+  -H 'Content-Type: application/json' --data-binary @contracts/interns.json
+```
+
+If `source-service` exits at startup complaining that no contracts are
+registered, the registry is up but empty — re-run `contract-registry-init`.
 
 ## Manual smoke test (Phase 1.21)
 

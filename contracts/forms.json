@@ -1,0 +1,72 @@
+{
+  "contractId": "forms",
+  "title": "Form Responses",
+  "schemaVersion": 1,
+  "naturalKey": {
+    "strategy": "field",
+    "fields": [
+      "formId",
+      "questionId"
+    ]
+  },
+  "recordTypes": [
+    "form.response.created"
+  ],
+  "fields": [
+    {
+      "name": "formId",
+      "type": "string",
+      "required": true,
+      "queryable": true
+    },
+    {
+      "name": "questionId",
+      "type": "string",
+      "required": true,
+      "queryable": true
+    },
+    {
+      "name": "respondentId",
+      "type": "string",
+      "required": true
+    },
+    {
+      "name": "questionText",
+      "type": "string",
+      "required": true
+    },
+    {
+      "name": "answer",
+      "type": "string",
+      "required": false
+    },
+    {
+      "name": "position",
+      "type": "integer",
+      "required": true
+    },
+    {
+      "name": "required",
+      "type": "boolean",
+      "required": true,
+      "default": "false"
+    },
+    {
+      "name": "submittedAt",
+      "type": "date",
+      "required": true
+    },
+    {
+      "name": "channel",
+      "type": "enum",
+      "required": true,
+      "values": [
+        "WEB",
+        "MOBILE",
+        "IMPORT"
+      ],
+      "default": "WEB",
+      "queryable": true
+    }
+  ]
+}

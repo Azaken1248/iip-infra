@@ -1,0 +1,69 @@
+{
+  "contractId": "interns",
+  "title": "Intern Records",
+  "schemaVersion": 1,
+  "naturalKey": {
+    "strategy": "field",
+    "fields": [
+      "internId"
+    ]
+  },
+  "recordTypes": [
+    "intern.created"
+  ],
+  "fields": [
+    {
+      "name": "internId",
+      "type": "string",
+      "required": true,
+      "queryable": true
+    },
+    {
+      "name": "firstName",
+      "type": "string",
+      "required": true
+    },
+    {
+      "name": "lastName",
+      "type": "string",
+      "required": true
+    },
+    {
+      "name": "email",
+      "type": "email",
+      "required": true
+    },
+    {
+      "name": "college",
+      "type": "string",
+      "required": true
+    },
+    {
+      "name": "department",
+      "type": "string",
+      "required": true
+    },
+    {
+      "name": "mentor",
+      "type": "string",
+      "required": false
+    },
+    {
+      "name": "startDate",
+      "type": "date",
+      "required": true
+    },
+    {
+      "name": "status",
+      "type": "enum",
+      "required": true,
+      "values": [
+        "ACTIVE",
+        "COMPLETED",
+        "WITHDRAWN"
+      ],
+      "default": "ACTIVE",
+      "queryable": true
+    }
+  ]
+}
