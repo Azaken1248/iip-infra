@@ -43,11 +43,42 @@ cp .env.example .env   # override POSTGRES_PASSWORD / POSTGRES_HOST_PORT if you 
 docker compose up --build
 ```
 
+If `docker compose` reports `unknown command`, the Compose v2 CLI plugin isn't
+installed and the standalone binary is what you have — substitute
+`docker-compose` for `docker compose` in every command in this file. The two are
+interchangeable here; nothing in this compose file depends on which one runs it.
+
+The ports below are the defaults. `.env` overrides them, so check there before
+concluding a service is down — a health check against the default port may be
+answering from something else entirely.
+
 - UI: http://localhost:3000
 - Source Service: http://localhost:8080 (`/actuator/health`)
 - Contract Registry: http://localhost:8083 (`/contracts`)
 - Schema Registry: http://localhost:8085 (`/subjects`)
 - Kafka UI: http://localhost:8090
+
+### Upgrading a deployment that already has data
+
+`./postgres` is mounted at `/docker-entrypoint-initdb.d`, and Postgres runs
+those scripts **only when the data directory is empty**. On a volume created
+before a migration was added, that migration never runs — so a stack that works
+perfectly from scratch fails on an existing volume, and the symptom is not a
+missing-table error you can see. `contract-registry` runs `ddl-auto: validate`,
+so it exits during startup; `contract-registry-init` then polls a corpse.
+
+After pulling changes that add a file under `./postgres`, apply it by hand:
+
+```bash
+docker exec -i iip-postgres psql -U iip -d iip < postgres/02-registry.sql
+```
+
+Every script here is written with `CREATE TABLE IF NOT EXISTS`, so re-applying
+one is a no-op and this is always safe. `docker compose down -v` also works but
+destroys the interns rows and the file-adapter dedup store.
+
+Note that this is untested territory: `e2e-tests` builds a fresh Postgres on
+every run, so it exercises the from-scratch path and never this one.
 
 ### Where contracts come from
 

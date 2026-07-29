@@ -162,6 +162,12 @@ services:
     image: curlimages/curl:latest
     container_name: iip-contract-registry-init
     depends_on:
+      # service_started, not service_healthy: the registry image carries no
+      # curl, so it has no healthcheck to wait on. That means "started" here
+      # is compatible with the app having already died -- hence the bounded
+      # poll below. An unbounded `until curl` turns a registry that crashed
+      # on boot into a stack that hangs forever with no error, which is a
+      # much worse failure than the one it is covering for.
       contract-registry:
         condition: service_started
     volumes:
@@ -170,7 +176,15 @@ services:
     command: >
       "
       echo 'waiting for the contract registry...' &&
-      until curl -sf http://contract-registry:8083/actuator/health >/dev/null; do sleep 2; done &&
+      attempt=0;
+      until curl -sf http://contract-registry:8083/actuator/health >/dev/null; do
+      attempt=$$((attempt + 1));
+      if [ $$attempt -ge 60 ]; then
+      echo 'contract-registry never became reachable after 120s -- it is almost certainly dead, not slow: run docker logs iip-contract-registry' >&2;
+      exit 1;
+      fi;
+      sleep 2;
+      done &&
       for f in /contracts/*.json; do
       echo registering $$f;
       curl -sS --fail-with-body -X POST http://contract-registry:8083/contracts -H 'Content-Type: application/json' --data-binary @$$f || exit 1;
