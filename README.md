@@ -23,6 +23,8 @@ InternIntegrationPlatform/
 | `kafka-topics-init` | same, one-shot job creating `interns.created` / `iip.dlq` | — |
 | `kafka-ui` | `ghcr.io/kafbat/kafka-ui` | 8090 |
 | `postgres` | `postgres:17-alpine`, schema from `postgres/*.sql` (applied in lexical order) | 5433 (host) → 5432 (container) |
+| `schema-registry` | `confluentinc/cp-schema-registry`, holds the envelope schema | 8085 (host) → 8081 (container) |
+| `schema-registry-init` | one-shot job registering `schemas/envelope.json` as `iip.envelope-value` | — |
 | `contract-registry` | built from `../contract-registry` | 8083 |
 | `contract-registry-init` | one-shot job POSTing `contracts/*.json` into the registry | — |
 | `source-service` | built from `../source-service` | 8080 |
@@ -44,6 +46,7 @@ docker compose up --build
 - UI: http://localhost:3000
 - Source Service: http://localhost:8080 (`/actuator/health`)
 - Contract Registry: http://localhost:8083 (`/contracts`)
+- Schema Registry: http://localhost:8085 (`/subjects`)
 - Kafka UI: http://localhost:8090
 
 ### Where contracts come from
@@ -67,6 +70,47 @@ curl -X POST http://localhost:8083/contracts \
 If `source-service` exits at startup complaining that no contracts are
 registered, the registry is up but empty — re-run `contract-registry-init`.
 
+### Where the envelope schema comes from
+
+The **contract** describes one schema's payload and lives in the Contract
+Registry. The **envelope** is the same for every contract (Data Model §1a) and
+lives in the Schema Registry, as `schemas/envelope.json` registered under
+subject `iip.envelope-value` with BACKWARD compatibility. Two registries,
+because they answer different questions and change at different rates: a
+contract is edited from a UI several times a day, an envelope change is a
+platform-wide event that goes through CI and a deploy.
+
+From Release 4 none of the three service images ships the envelope schema
+either. All three fetch it at startup and **refuse to start without it** —
+the source service validates every envelope before the producer batches it,
+and both adapters validate every message before touching a database, a file,
+or a dedup store.
+
+What is on the wire is still plain canonical JSON. The registry owns the
+schema, not the byte format: no magic byte, no schema id, no Confluent client
+needed to read a topic. That is deliberate — see the decision note under
+Release 4 in the [rollout plan](https://github.com/Azaken1248/iip-docs/blob/main/05-phased-rollout.md).
+
+```bash
+curl -s http://localhost:8085/subjects/iip.envelope-value/versions/latest | jq -r .schema | jq .
+```
+
+### The compatibility gate
+
+`scripts/compatibility-gate.sh` is what CI runs, and it needs both registries
+up:
+
+```bash
+sh scripts/compatibility-gate.sh
+```
+
+It checks `schemas/envelope.json` against the registered envelope subject,
+replays the per-contract BACKWARD check over every file in `contracts/`, and
+confirms each service's `src/test/resources/schemas/envelope.json` fixture
+still matches this repo's copy. An incompatible change fails the build rather
+than production, which is the whole point — and the gate is itself proven to
+fail, by `e2e-tests`, against a deliberately-breaking contract.
+
 ## Manual smoke test (Phase 1.21)
 
 The automated version of this lives in `e2e-tests/` (below); this is the same walkthrough by hand, useful for eyeballing the UI itself rather than just asserting on it:
@@ -87,9 +131,26 @@ docker compose up -d --build kafka kafka-topics-init postgres source-service db-
 A separate, standalone Maven project (no Spring Boot — it only orchestrates other services' containers, it doesn't run application code of its own) proving Original Specification §9's guarantee: one HTTP submission through the real Source Service lands in both real targets. It builds the actual Docker images from each service's own `Dockerfile` via Testcontainers, wires them together on one network, and asserts a Postgres row and a CSV line both appear. It lives here rather than in any single service's repo because this is the only place that's ever known how to wire all three together.
 
 ```bash
+docker pull confluentinc/cp-schema-registry:7.7.1   # first run only, see below
 cd e2e-tests
 ./mvnw test
 ```
+
+**Pre-pull that image on a first run.** Testcontainers abandons an image pull
+after two minutes and the Schema Registry image is around 1.5 GB, so on a slow
+connection the suite fails with `ContainerFetchException: Can't get Docker
+image` before a single assertion runs. That limit is not configurable from the
+test, and it is a pull problem rather than a pipeline problem — pulling once
+by hand is the whole fix. Every other image the suite uses is either small or
+built locally from a sibling repo.
+
+From Release 4 the suite proves more than Release 1's exit criterion. It also
+runs `schemas/register-envelope.sh` and `scripts/compatibility-gate.sh` as
+scripts, in a container on the pipeline's own network, so what is tested is
+what a deployment and CI actually execute rather than a Java reimplementation
+of it — including that the gate *fails* when handed a deliberately-breaking
+contract, and that a contract evolved through the API goes live with nothing
+redeployed (Phases 4.10 and 4.11).
 
 ## Notes
 

@@ -1,0 +1,57 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://iip.internal/schemas/envelope.json",
+  "title": "IIP Canonical Envelope",
+  "description": "The fixed envelope every record crosses a service boundary in (Data Model 1a). One schema for the whole platform, not one per contract: payload is an opaque object here, and its shape is the Contract Registry's business, not this file's. Registered with the Schema Registry as subject 'iip.envelope-value' under BACKWARD compatibility. additionalProperties is deliberately left open -- BACKWARD exists so an adapter keeps working when the source service ships an envelope change first, and a closed schema would break precisely that case, on the consumer side, in production.",
+  "type": "object",
+  "required": [
+    "recordId",
+    "contractId",
+    "recordType",
+    "schemaVersion",
+    "naturalKey",
+    "occurredAt",
+    "payload"
+  ],
+  "properties": {
+    "recordId": {
+      "description": "Unique per event, not per entity. Every adapter's idempotency key.",
+      "type": "string",
+      "format": "uuid"
+    },
+    "contractId": {
+      "description": "Which contract this record conforms to. Same character class the Contract Registry enforces on registration, so a contractId that could never be registered can never appear on a topic either.",
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9-]*$"
+    },
+    "recordType": {
+      "description": "The event type within the contract, e.g. intern.created. That it is one of the contract's *declared* record types is checked by the source service, which knows the contract; this schema only knows it must be present and non-empty.",
+      "type": "string",
+      "minLength": 1
+    },
+    "schemaVersion": {
+      "description": "The contract version this payload was validated against. Versions start at 1, which is what makes the per-contract compatibility check meaningful.",
+      "type": "integer",
+      "minimum": 1
+    },
+    "naturalKey": {
+      "description": "Business identifier, derived per the contract's key strategy. Also the Kafka partition key, so an empty one would silently collapse ordering into round-robin -- hence minLength.",
+      "type": "string",
+      "minLength": 1
+    },
+    "occurredAt": {
+      "description": "ISO-8601 UTC, set server-side at publish time.",
+      "type": "string",
+      "format": "date-time"
+    },
+    "traceId": {
+      "description": "Correlates every event of one logical user action. Nullable and not required until Release 8 wires propagation end-to-end; the field is declared now so the envelope's shape does not change when it does.",
+      "type": ["string", "null"],
+      "format": "uuid"
+    },
+    "payload": {
+      "description": "The per-contract body. Deliberately unconstrained here: constraining it would make this a per-contract schema and put the platform back where Release 3 started.",
+      "type": "object"
+    }
+  }
+}

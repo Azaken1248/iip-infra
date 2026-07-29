@@ -42,6 +42,64 @@ services:
       "
     networks: [iip]
 
+  # Phase 4.6. The envelope stops being a Java record three services happen to
+  # agree on and becomes a versioned artifact with an owner. Note what is NOT
+  # here: no per-contract subjects. The envelope is one schema for the whole
+  # platform (Data Model 1a); per-contract payload schemas live in the
+  # Contract Registry, which is a different service for a different reason.
+  schema-registry:
+    image: confluentinc/cp-schema-registry:7.7.1
+    hostname: schema-registry
+    container_name: iip-schema-registry
+    environment:
+      SCHEMA_REGISTRY_HOST_NAME: schema-registry
+      SCHEMA_REGISTRY_KAFKASTORE_BOOTSTRAP_SERVERS: PLAINTEXT://kafka:19092
+      SCHEMA_REGISTRY_LISTENERS: http://0.0.0.0:8081
+      # Platform-wide default, so a subject created by accident still gets the
+      # rule Data Model 5.1 asks for rather than Confluent's own default.
+      SCHEMA_REGISTRY_SCHEMA_COMPATIBILITY_LEVEL: BACKWARD
+    ports:
+      # 8085 on the host because the db-adapter already owns 8081 there;
+      # inside the network it stays on Schema Registry's conventional 8081.
+      - "${SCHEMA_REGISTRY_HOST_PORT:-8085}:8081"
+    depends_on:
+      kafka:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8081/subjects >/dev/null"]
+      interval: 10s
+      timeout: 5s
+      retries: 15
+      start_period: 20s
+    networks: [iip]
+
+  # Phase 4.7. Registers infra/schemas/envelope.json as the subject every
+  # service validates against. Same shape as kafka-topics-init and
+  # contract-registry-init: the deployment's starting state is applied by a
+  # job through the public API, never baked into an image.
+  #
+  # The work lives in a script rather than inline here because it needs both
+  # JSON bodies and single-quoted jq programs, and nesting those inside a
+  # folded YAML scalar inside a shell -c string is three quoting layers deep
+  # -- a file has one. The same script is what CI runs in Phase 4.10.
+  schema-registry-init:
+    image: alpine:3.20
+    container_name: iip-schema-registry-init
+    depends_on:
+      schema-registry:
+        condition: service_healthy
+    environment:
+      SCHEMA_REGISTRY_URL: http://schema-registry:8081
+    volumes:
+      - ./schemas:/schemas:ro
+    entrypoint: ["/bin/sh", "-c"]
+    command: >
+      "
+      apk add --no-cache curl jq >/dev/null &&
+      sh /schemas/register-envelope.sh
+      "
+    networks: [iip]
+
   kafka-ui:
     image: ghcr.io/kafbat/kafka-ui:latest
     container_name: iip-kafka-ui
@@ -136,6 +194,11 @@ services:
       CONTRACTS_SOURCE: registry
       CONTRACT_REGISTRY_URL: http://contract-registry:8083
       CONTRACT_REFRESH_INTERVAL_MS: ${CONTRACT_REFRESH_INTERVAL_MS:-30000}
+      # Phase 4.8: every envelope is validated against the registered schema
+      # before it reaches the producer's batch, so a malformed one fails the
+      # POST rather than landing on a topic for an adapter to choke on.
+      ENVELOPE_SCHEMA_SOURCE: registry
+      SCHEMA_REGISTRY_URL: http://schema-registry:8081
     ports:
       - "${SOURCE_SERVICE_HOST_PORT:-8080}:8080"
     depends_on:
@@ -144,6 +207,8 @@ services:
       # Not merely "the registry is up": the contracts have to be *in* it,
       # or this service starts, finds an empty registry, and exits.
       contract-registry-init:
+        condition: service_completed_successfully
+      schema-registry-init:
         condition: service_completed_successfully
     networks: [iip]
 
@@ -165,6 +230,11 @@ services:
       RETRY_MAX_ATTEMPTS: ${DB_ADAPTER_RETRY_MAX_ATTEMPTS:-3}
       RETRY_INITIAL_BACKOFF_MS: ${DB_ADAPTER_RETRY_INITIAL_BACKOFF_MS:-200}
       RETRY_MULTIPLIER: ${DB_ADAPTER_RETRY_MULTIPLIER:-2.0}
+      # Phase 4.8: this image ships no envelope schema, so without these two
+      # it falls back to the classpath, finds nothing, and refuses to start --
+      # the intended failure rather than a silent one.
+      ENVELOPE_SCHEMA_SOURCE: registry
+      SCHEMA_REGISTRY_URL: http://schema-registry:8081
     ports:
       - "${DB_ADAPTER_HOST_PORT:-8081}:8081"
     depends_on:
@@ -172,6 +242,8 @@ services:
         condition: service_completed_successfully
       postgres:
         condition: service_healthy
+      schema-registry-init:
+        condition: service_completed_successfully
     networks: [iip]
 
   file-adapter:
@@ -187,12 +259,16 @@ services:
       RETRY_MAX_ATTEMPTS: ${FILE_ADAPTER_RETRY_MAX_ATTEMPTS:-3}
       RETRY_INITIAL_BACKOFF_MS: ${FILE_ADAPTER_RETRY_INITIAL_BACKOFF_MS:-200}
       RETRY_MULTIPLIER: ${FILE_ADAPTER_RETRY_MULTIPLIER:-2.0}
+      ENVELOPE_SCHEMA_SOURCE: registry
+      SCHEMA_REGISTRY_URL: http://schema-registry:8081
     ports:
       - "${FILE_ADAPTER_HOST_PORT:-8082}:8082"
     volumes:
       - file-adapter-data:/data
     depends_on:
       kafka-topics-init:
+        condition: service_completed_successfully
+      schema-registry-init:
         condition: service_completed_successfully
     networks: [iip]
 
