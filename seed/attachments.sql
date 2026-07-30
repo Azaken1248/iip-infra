@@ -81,3 +81,41 @@ VALUES (
     true
 )
 ON CONFLICT DO NOTHING;
+
+-- interns -> the csv adapter (Phase 6.3).
+--
+-- The column list that was a constant in CsvInternWriter until this phase, in
+-- the same order, so interns.csv keeps the exact shape every downstream reader
+-- of it has seen since Release 1. record_id and created_at are absent for the
+-- same reason they are absent above: the adapter always writes those from the
+-- envelope, first and last.
+--
+-- A list, not an object: config is stored in a jsonb column, and jsonb does not
+-- preserve an object's key order -- it sorts keys by length then bytewise. As an
+-- object this mapping came back rearranged and the adapter wrote rows that did
+-- not match their own header.
+--
+-- No `path`, so it falls back to the adapter's configured output file --
+-- which is what this deployment has always written, and what the Targets page
+-- reads.
+INSERT INTO adapter_attachments (attachment_id, contract_id, adapter_type, config, enabled)
+VALUES (
+    'c4e7a1b8-9f30-4d62-8a15-7b2c6e0d3f94',
+    'interns',
+    'csv',
+    '{
+       "columns": [
+         {"header": "intern_id",  "field": "internId"},
+         {"header": "first_name", "field": "firstName"},
+         {"header": "last_name",  "field": "lastName"},
+         {"header": "email",      "field": "email"},
+         {"header": "college",    "field": "college"},
+         {"header": "department", "field": "department"},
+         {"header": "mentor",     "field": "mentor"},
+         {"header": "start_date", "field": "startDate"},
+         {"header": "status",     "field": "status"}
+       ]
+     }'::jsonb,
+    true
+)
+ON CONFLICT DO NOTHING;

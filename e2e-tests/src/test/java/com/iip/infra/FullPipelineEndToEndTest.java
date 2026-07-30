@@ -227,6 +227,10 @@ class FullPipelineEndToEndTest {
 				.withEnv("KAFKA_BOOTSTRAP_SERVERS", "kafka:9092")
 				.withEnv("SERVER_PORT", "8082")
 				.withEnv("FILE_OUTPUT_PATH", "/data/interns.csv")
+				// Phase 6.3: the csv adapter's columns and output file are
+				// registry data now, and it refuses to start without them.
+				.withEnv("CONTRACT_REGISTRY_URL", "http://contract-registry:8083")
+				.withEnv("ATTACHMENT_REFRESH_INTERVAL_MS", "2000")
 				.withEnv("DEDUP_STORE_PATH", "/data/file-adapter-dedup")
 				.withEnv("ENVELOPE_SCHEMA_SOURCE", "registry")
 				.withEnv("SCHEMA_REGISTRY_URL", "http://schema-registry:8081")

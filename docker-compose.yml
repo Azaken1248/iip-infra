@@ -327,6 +327,10 @@ services:
       KAFKA_BOOTSTRAP_SERVERS: kafka:19092
       SERVER_PORT: 8082
       FILE_OUTPUT_PATH: /data/interns.csv
+      # Phase 6.3: which contracts this adapter writes for, and the columns and
+      # file each one gets, are registry data now rather than deployment config.
+      CONTRACT_REGISTRY_URL: http://contract-registry:8083
+      ATTACHMENT_REFRESH_INTERVAL_MS: ${ATTACHMENT_REFRESH_INTERVAL_MS:-30000}
       DEDUP_STORE_PATH: /data/file-adapter-dedup
       CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-http://localhost:5173,http://localhost:3000}
       RETRY_MAX_ATTEMPTS: ${FILE_ADAPTER_RETRY_MAX_ATTEMPTS:-3}
@@ -342,6 +346,10 @@ services:
       kafka-topics-init:
         condition: service_completed_successfully
       schema-registry-init:
+        condition: service_completed_successfully
+      # Phase 6.3: this adapter reads its columns and output file from the
+      # registry now, and refuses to start without them -- same as db-adapter.
+      attachment-init:
         condition: service_completed_successfully
     networks: [iip]
 
