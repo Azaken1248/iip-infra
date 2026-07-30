@@ -94,31 +94,49 @@ normalized_table() {
 		| sed 's/ *$//'
 }
 
-echo "== checking db-adapter's SQL fixture against $INFRA/postgres"
-FIXTURE="$REPOS/db-adapter/src/test/resources/init.sql"
+# $1 = label, $2 = fixture path, then table:source-file pairs. Every repo that
+# keeps a copy of a shared table gets a call; add a pair when one starts using
+# another table.
+check_fixture() {
+	label="$1"
+	fixture="$2"
+	shift 2
 
-if [ ! -f "$FIXTURE" ]; then
-	fail "missing SQL fixture $FIXTURE"
-else
-	# table:source-file pairs. Add a row when an adapter starts using a table.
-	for pair in "interns:01-interns.sql" "records:03-records.sql"; do
+	echo "== checking $label's SQL fixture against $INFRA/postgres"
+
+	if [ ! -f "$fixture" ]; then
+		fail "missing SQL fixture $fixture"
+		return
+	fi
+
+	for pair in "$@"; do
 		table="${pair%%:*}"
 		source_file="$INFRA/postgres/${pair#*:}"
 
 		real=$(normalized_table "$source_file" "$table")
-		copy=$(normalized_table "$FIXTURE" "$table")
+		copy=$(normalized_table "$fixture" "$table")
 
 		if [ -z "$real" ]; then
 			fail "table '$table' not found in $source_file -- the gate is checking a table that moved"
 		elif [ -z "$copy" ]; then
-			fail "table '$table' is missing from $FIXTURE -- db-adapter's tests would run without it"
+			fail "table '$table' is missing from $fixture -- $label's tests would run without it"
 		elif [ "$real" != "$copy" ]; then
-			fail "table '$table' in $FIXTURE has drifted from $source_file"
+			fail "table '$table' in $fixture has drifted from $source_file"
 		else
-			echo "  ok  db-adapter fixture: $table"
+			echo "  ok  $label fixture: $table"
 		fi
 	done
-fi
+}
+
+check_fixture "db-adapter" "$REPOS/db-adapter/src/test/resources/init.sql" \
+	"interns:01-interns.sql" "records:03-records.sql"
+
+# The registry's own tables. It runs ddl-auto: validate against this copy, so a
+# drifted one means a suite that passes against a schema the deployment does not
+# have -- the same hazard as the adapters', one layer up.
+check_fixture "contract-registry" "$REPOS/contract-registry/src/test/resources/registry-schema.sql" \
+	"contracts:02-registry.sql" "adapter_attachments:02-registry.sql" \
+	"adapter_types:05-adapter-types.sql"
 
 # --- 1. the envelope ---------------------------------------------------------
 

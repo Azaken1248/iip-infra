@@ -80,6 +80,14 @@ destroys the interns rows and the file-adapter dedup store.
 Note that this is untested territory: `e2e-tests` builds a fresh Postgres on
 every run, so it exercises the from-scratch path and never this one.
 
+`./seed` is deliberately **not** mounted there. It holds control-plane data
+rather than schema — currently the adapter attachments — and it is applied on
+every `up` by the `attachment-init` job, so it needs no manual step and works
+on an existing volume. Anything that must run after the contracts exist belongs
+in `./seed`, not `./postgres`: an attachment references a contract by foreign
+key, and as an init script it would fail Postgres' own startup on a fresh
+volume.
+
 ### Where contracts come from
 
 From Release 4 the source-service ships **no contract files**. It fetches
