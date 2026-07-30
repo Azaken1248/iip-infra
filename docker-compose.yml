@@ -194,6 +194,40 @@ services:
       "
     networks: [iip]
 
+  # Phase 5.8. Attaches the contracts to this deployment's postgres adapter.
+  #
+  # A separate job from contract-registry-init above, and it has to be: an
+  # attachment references a contract by foreign key, so the contracts must
+  # already be registered -- hence service_completed_successfully rather than
+  # running both at once.
+  #
+  # Applied with psql rather than through the API because there is no
+  # attachment API yet; Phase 6.6 adds POST /contracts/{id}/adapters and this
+  # job goes away with it. Not an initdb script either: those run only against
+  # an empty data volume, and this has to work on a deployment that already
+  # has data. The SQL is idempotent, so running it on every `up` is the point
+  # rather than a compromise.
+  attachment-init:
+    image: postgres:17-alpine
+    container_name: iip-attachment-init
+    depends_on:
+      postgres:
+        condition: service_healthy
+      contract-registry-init:
+        condition: service_completed_successfully
+    environment:
+      PGPASSWORD: ${POSTGRES_PASSWORD:-iip}
+    volumes:
+      - ./seed:/seed:ro
+    entrypoint: ["/bin/sh", "-c"]
+    command: >
+      "
+      psql -h postgres -U ${POSTGRES_USER:-iip} -d ${POSTGRES_DB:-iip}
+      --set ON_ERROR_STOP=1 -f /seed/attachments.sql &&
+      echo 'attachments applied'
+      "
+    networks: [iip]
+
   source-service:
     build:
       context: ../source-service
@@ -249,6 +283,12 @@ services:
       # the intended failure rather than a silent one.
       ENVELOPE_SCHEMA_SOURCE: registry
       SCHEMA_REGISTRY_URL: http://schema-registry:8081
+      # Phase 5.2: which contracts this adapter writes for is registry data,
+      # not deployment config. Only *where to ask* is configured here -- and it
+      # is required, because the adapter refuses to start rather than come up
+      # attached to nothing and silently discard every record.
+      CONTRACT_REGISTRY_URL: http://contract-registry:8083
+      ATTACHMENT_REFRESH_INTERVAL_MS: ${ATTACHMENT_REFRESH_INTERVAL_MS:-30000}
     ports:
       - "${DB_ADAPTER_HOST_PORT:-8081}:8081"
     depends_on:
@@ -257,6 +297,12 @@ services:
       postgres:
         condition: service_healthy
       schema-registry-init:
+        condition: service_completed_successfully
+      # Phase 5.8: the attachments must exist before this starts, or its first
+      # act is to log that it is attached to nothing. It would recover on the
+      # next refresh, but a stack that comes up already working beats one that
+      # comes up wrong and fixes itself 30 seconds later.
+      attachment-init:
         condition: service_completed_successfully
     networks: [iip]
 

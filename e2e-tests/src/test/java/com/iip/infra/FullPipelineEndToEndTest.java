@@ -120,7 +120,15 @@ class FullPipelineEndToEndTest {
 				// repository plainly contains.
 				.withCopyFileToContainer(
 						MountableFile.forHostPath(Path.of("../postgres")),
-						"/docker-entrypoint-initdb.d/");
+						"/docker-entrypoint-initdb.d/")
+				// Phase 5.8's attachments, copied somewhere initdb will *not*
+				// find them. They reference contracts by foreign key and the
+				// contracts are registered over HTTP well after initdb has
+				// finished, so running this as an init script would fail the
+				// container's own startup.
+				.withCopyFileToContainer(
+						MountableFile.forHostPath(Path.of("../seed")),
+						"/seed/");
 		postgres.start();
 
 		// Phase 4.6/4.7. Not scenery: after Phase 4.8 none of the three
@@ -169,6 +177,7 @@ class FullPipelineEndToEndTest {
 		contractRegistry.start();
 
 		registerTheDeploymentsContracts();
+		applyTheDeploymentsAttachments();
 
 		sourceService = new GenericContainer<>(
 				new ImageFromDockerfile("iip/source-service-e2e", false)
@@ -200,6 +209,13 @@ class FullPipelineEndToEndTest {
 				.withEnv("SERVER_PORT", "8081")
 				.withEnv("ENVELOPE_SCHEMA_SOURCE", "registry")
 				.withEnv("SCHEMA_REGISTRY_URL", "http://schema-registry:8081")
+				// Phase 5.2/5.8. Required: the adapter refuses to start rather
+				// than come up attached to nothing. 2s against 30s in
+				// production, for the same reason the source service's contract
+				// refresh is shortened here -- the interval is how long an
+				// attachment takes to go live, not whether it does.
+				.withEnv("CONTRACT_REGISTRY_URL", "http://contract-registry:8083")
+				.withEnv("ATTACHMENT_REFRESH_INTERVAL_MS", "2000")
 				.withExposedPorts(8081)
 				.waitingFor(Wait.forHttp("/actuator/health").forPort(8081).withStartupTimeout(Duration.ofMinutes(3)));
 		dbAdapter.start();
@@ -263,6 +279,28 @@ class FullPipelineEndToEndTest {
 		}
 	}
 
+	/**
+	 * Applies {@code infra/seed/attachments.sql} -- the same file the compose
+	 * stack's {@code attachment-init} job applies, run the same way, against the
+	 * same database.
+	 *
+	 * <p>Attaching a contract to an adapter is control-plane data, and this is
+	 * the deployment's starting state rather than a fixture invented for the
+	 * test: the file says {@code interns} is shaped and {@code forms} is
+	 * generic, and Phase 5.8's claim is about what an operator actually gets.
+	 * Writing the two rows in Java here would prove a pipeline nobody deploys.
+	 *
+	 * <p>After the contracts, necessarily -- an attachment references one by
+	 * foreign key.
+	 */
+	private static void applyTheDeploymentsAttachments() throws Exception {
+		Container.ExecResult result = postgres.execInContainer("sh", "-c",
+				"psql -v ON_ERROR_STOP=1 -U iip -d iip -f /seed/attachments.sql");
+
+		assertEquals(0, result.getExitCode(),
+				"applying the deployment's attachments failed:\n" + result.getStdout() + result.getStderr());
+	}
+
 	@AfterAll
 	static void stopThePipeline() {
 		if (fileAdapter != null) fileAdapter.stop();
@@ -320,6 +358,73 @@ class FullPipelineEndToEndTest {
 		assertTrue(foundInCsv, "expected a CSV line for " + internId + " via the File Adapter");
 	}
 
+	/**
+	 * <strong>Release 5's exit criterion.</strong> A forms record goes in
+	 * through the real HTTP intake and lands in the generic table, with zero
+	 * code written for forms anywhere in the platform.
+	 *
+	 * <p>Everything this record touches on the way is data. The contract is a
+	 * row {@code contract-registry-init} POSTed; the topic name is derived from
+	 * its id; the adapter consumes it because a row in {@code
+	 * adapter_attachments} says so; the payload lands as JSONB because that
+	 * attachment names no table. No service was rebuilt, no descriptor lists
+	 * {@code forms.created}, and no Java type in any of the four repositories
+	 * has a field called {@code questionText}.
+	 *
+	 * <p>Run against the same images as {@link
+	 * #submittingAnInternViaHttpLandsInPostgresAndCsv}, which is the other half
+	 * of the claim: interns still lands in its own typed table through the same
+	 * running adapter. The generic table is a default, not a replacement.
+	 */
+	@Test
+	@Order(2)
+	void submittingAFormResponseViaHttpLandsInTheGenericRecordsTable() throws Exception {
+		String formId = "FORM-E2E-" + UUID.randomUUID();
+		String questionId = "Q-1";
+		// The natural key the contract declares is composite -- [formId,
+		// questionId] joined with '|' -- so this is also the first end-to-end
+		// exercise of a key strategy the interns contract never used.
+		String expectedNaturalKey = formId + "|" + questionId;
+
+		String requestBody = """
+				{
+				  "formId": "%s",
+				  "questionId": "%s",
+				  "respondentId": "R-1",
+				  "questionText": "How was the onboarding?",
+				  "answer": "Genuinely fine",
+				  "position": 1,
+				  "required": true,
+				  "submittedAt": "2026-07-21",
+				  "channel": "WEB"
+				}
+				""".formatted(formId, questionId);
+
+		HttpResponse<String> response = HttpClient.newHttpClient().send(
+				HttpRequest.newBuilder(URI.create(sourceServiceUrl() + "/contracts/forms/records"))
+						.header("Content-Type", "application/json")
+						.POST(HttpRequest.BodyPublishers.ofString(requestBody))
+						.build(),
+				HttpResponse.BodyHandlers.ofString());
+
+		assertEquals(202, response.statusCode(),
+				"the real HTTP submission should be accepted: " + response.body());
+
+		String payload = awaitGenericRecord(expectedNaturalKey);
+		if (payload == null) {
+			System.out.println("===== db-adapter logs =====");
+			System.out.println(dbAdapter.getLogs());
+		}
+		assertTrue(payload != null, "expected a row in 'records' for " + expectedNaturalKey);
+
+		// The payload arrives whole. A pipeline that dropped the fields nobody
+		// wrote a column for would still produce a row, and would be exactly
+		// the per-contract coupling this release removes.
+		assertTrue(payload.contains("How was the onboarding?"), payload);
+		assertTrue(payload.contains("Genuinely fine"), payload);
+		assertTrue(payload.contains("questionId"), payload);
+	}
+
 	// --- Phase 4.10: the compatibility gate ---------------------------------
 
 	/**
@@ -328,7 +433,7 @@ class FullPipelineEndToEndTest {
 	 * clean tree gets disabled within a week, and then it is not a gate.
 	 */
 	@Test
-	@Order(2)
+	@Order(3)
 	void theCompatibilityGatePassesOnTheRepositoryAsItStands() throws Exception {
 		Container.ExecResult result = runGate("/workspace/infra", "/workspace");
 
@@ -347,7 +452,7 @@ class FullPipelineEndToEndTest {
 	 * the tree, so what fails is the gate rather than the repository.
 	 */
 	@Test
-	@Order(3)
+	@Order(4)
 	void theGateBlocksAContractChangeThatWouldBreakDeployedConsumers() throws Exception {
 		String tree = prepareTreeCopy("breaking-contract");
 		// jq rewrites the file rather than a regex: the point is to produce a
@@ -377,7 +482,7 @@ class FullPipelineEndToEndTest {
 	 * not use, and every one of those suites would stay green.
 	 */
 	@Test
-	@Order(4)
+	@Order(5)
 	void theGateBlocksAServiceTestFixtureThatHasDriftedFromTheRealSchema() throws Exception {
 		String tree = prepareTreeCopy("drifted-fixture");
 		Container.ExecResult edit = exec("jq '.properties.recordId.description = \"drifted\"' "
@@ -445,7 +550,7 @@ class FullPipelineEndToEndTest {
 	 * run in the other order.
 	 */
 	@Test
-	@Order(5)
+	@Order(6)
 	void anOptionalFieldAddedThroughTheApiGoesLiveWithNothingRedeployed() throws Exception {
 		String registryUrl = "http://" + contractRegistry.getHost() + ":" + contractRegistry.getMappedPort(8083);
 		HttpClient client = HttpClient.newHttpClient();
@@ -535,6 +640,32 @@ class FullPipelineEndToEndTest {
 			}
 		}
 		return false;
+	}
+
+	/**
+	 * The generic table's counterpart to {@link #awaitPostgresRow}, and note
+	 * what the query does not need: a table per contract, a column per field,
+	 * or any knowledge of what a form response is. It asks for a record by the
+	 * envelope's natural key, which is identical for every contract.
+	 *
+	 * @return the stored payload, or null if nothing arrived in time
+	 */
+	private static String awaitGenericRecord(String naturalKey) throws Exception {
+		String jdbcUrl = "jdbc:postgresql://" + postgres.getHost() + ":" + postgres.getMappedPort(5432) + "/iip";
+		for (int i = 0; i < 30; i++) {
+			Thread.sleep(1000);
+			try (Connection conn = DriverManager.getConnection(jdbcUrl, "iip", "iip");
+					PreparedStatement stmt = conn.prepareStatement(
+							"SELECT payload FROM records WHERE contract_id = 'forms' AND natural_key = ?")) {
+				stmt.setString(1, naturalKey);
+				try (ResultSet rs = stmt.executeQuery()) {
+					if (rs.next()) {
+						return rs.getString("payload");
+					}
+				}
+			}
+		}
+		return null;
 	}
 
 	private static boolean awaitCsvLine(String internId) throws Exception {
