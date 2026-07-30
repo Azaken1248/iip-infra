@@ -1,5 +1,6 @@
 services:
   kafka:
+    restart: unless-stopped
     image: apache/kafka:4.3.1
     hostname: kafka
     container_name: iip-kafka
@@ -48,6 +49,7 @@ services:
   # platform (Data Model 1a); per-contract payload schemas live in the
   # Contract Registry, which is a different service for a different reason.
   schema-registry:
+    restart: unless-stopped
     image: confluentinc/cp-schema-registry:7.7.1
     hostname: schema-registry
     container_name: iip-schema-registry
@@ -101,6 +103,7 @@ services:
     networks: [iip]
 
   kafka-ui:
+    restart: unless-stopped
     image: ghcr.io/kafbat/kafka-ui:latest
     container_name: iip-kafka-ui
     ports:
@@ -114,6 +117,7 @@ services:
     networks: [iip]
 
   postgres:
+    restart: unless-stopped
     image: postgres:17-alpine
     container_name: iip-postgres
     environment:
@@ -136,6 +140,7 @@ services:
     networks: [iip]
 
   contract-registry:
+    restart: unless-stopped
     build:
       context: ../contract-registry
     container_name: iip-contract-registry
@@ -229,6 +234,7 @@ services:
     networks: [iip]
 
   source-service:
+    restart: unless-stopped
     build:
       context: ../source-service
     container_name: iip-source-service
@@ -261,6 +267,12 @@ services:
     networks: [iip]
 
   db-adapter:
+    # Paired with this service's deliberate fail-fast: it refuses to start
+    # without the registry (Phase 5.2), which without a restart policy would
+    # turn a few seconds of control-plane downtime during a restart into an
+    # adapter that stays dead until a human notices. Refusing to run
+    # misconfigured is right; staying down afterwards is not.
+    restart: unless-stopped
     build:
       context: ../db-adapter
     container_name: iip-db-adapter
@@ -307,6 +319,7 @@ services:
     networks: [iip]
 
   file-adapter:
+    restart: unless-stopped
     build:
       context: ../file-adapter
     container_name: iip-file-adapter
@@ -333,6 +346,7 @@ services:
     networks: [iip]
 
   ui:
+    restart: unless-stopped
     build:
       context: ../ui
     container_name: iip-ui
