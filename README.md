@@ -88,6 +88,22 @@ in `./seed`, not `./postgres`: an attachment references a contract by foreign
 key, and as an init script it would fail Postgres' own startup on a fresh
 volume.
 
+### What survives `docker compose down`
+
+Two named volumes: `postgres-data` (the interns, the generic `records` table,
+and the registry's contracts and attachments) and `kafka-data` (every topic,
+including `iip.dlq`).
+
+`kafka-data` was added late, and its absence was a real hole rather than an
+oversight in tidiness. Kafka's log dir was a path inside the container, so
+`down` destroyed every topic — which quietly removed two capabilities the docs
+promise: replaying a contract's records from topic retention (UC-9's backfill
+postcondition), and the DLQ itself, whose whole purpose is that a bad message
+is quarantined rather than lost. `down` is a command people run to restart a
+stack, not one they expect to empty a quarantine queue.
+
+`down -v` still destroys both, which is what it is for.
+
 ### Where contracts come from
 
 From Release 4 the source-service ships **no contract files**. It fetches

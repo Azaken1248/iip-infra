@@ -20,7 +20,20 @@ services:
       KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
       KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
       KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
-      KAFKA_LOG_DIRS: "/tmp/kraft-combined-logs"
+      KAFKA_LOG_DIRS: "/var/lib/kafka/data"
+    volumes:
+      # Kafka had no volume at all until now: its log dir was a path inside the
+      # container, so every `docker compose down` silently destroyed every
+      # topic. That is not a tidiness problem -- it takes two documented
+      # capabilities with it. Replaying a contract's records from topic
+      # retention (UC-9's backfill postcondition) is impossible if the
+      # retention is gone, and the DLQ, whose entire purpose is that a bad
+      # message is quarantined rather than lost, was being emptied by a command
+      # people run to restart the stack.
+      #
+      # /var/lib/kafka/data rather than the old /tmp path: /tmp is not somewhere
+      # durable data should live even when it happens to survive.
+      - kafka-data:/var/lib/kafka/data
     healthcheck:
       test: ["CMD-SHELL", "/opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server localhost:9092 >/dev/null 2>&1"]
       interval: 10s
@@ -368,5 +381,6 @@ networks:
   iip:
 
 volumes:
+  kafka-data:
   postgres-data:
   file-adapter-data:
