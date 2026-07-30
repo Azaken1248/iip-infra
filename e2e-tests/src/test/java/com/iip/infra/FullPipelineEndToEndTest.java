@@ -111,12 +111,16 @@ class FullPipelineEndToEndTest {
 				// mounts it -- the registry's tables come from 02-registry.sql
 				// and the contract-registry container will not start without
 				// them (ddl-auto: validate).
+				//
+				// Copied as a directory rather than file-by-file on purpose.
+				// The enumerated version said "the whole directory" in this
+				// comment while actually naming two files, so Phase 5.1's
+				// 03-records.sql would have been silently absent here and the
+				// generic write path would have failed against a table the
+				// repository plainly contains.
 				.withCopyFileToContainer(
-						MountableFile.forHostPath(Path.of("../postgres/01-interns.sql")),
-						"/docker-entrypoint-initdb.d/01-interns.sql")
-				.withCopyFileToContainer(
-						MountableFile.forHostPath(Path.of("../postgres/02-registry.sql")),
-						"/docker-entrypoint-initdb.d/02-registry.sql");
+						MountableFile.forHostPath(Path.of("../postgres")),
+						"/docker-entrypoint-initdb.d/");
 		postgres.start();
 
 		// Phase 4.6/4.7. Not scenery: after Phase 4.8 none of the three

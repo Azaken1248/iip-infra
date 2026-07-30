@@ -72,6 +72,54 @@ for copy in \
 	fi
 done
 
+# --- 0b. the SQL fixtures that stand in for the real schema in tests ---------
+#
+# Same hazard as the envelope fixtures above, one layer down. db-adapter keeps a
+# copy of the tables it reads and writes under src/test/resources/init.sql so
+# its Testcontainers Postgres has a schema without this repo being present.
+#
+# Not a whole-file diff, because that copy is deliberately a *subset*: it holds
+# interns and records and pointedly not the contract registry's own tables,
+# which this adapter reads over HTTP rather than by querying. So each shared
+# table is compared on its own, normalized -- comments stripped, whitespace
+# collapsed -- which is the part that has to agree.
+
+normalized_table() {
+	# $1 = file, $2 = table name. Empty output means "not found in this file",
+	# which the caller must treat as a failure rather than a match, or a typo'd
+	# table name would silently compare "" against "".
+	sed -n "/CREATE TABLE IF NOT EXISTS $2 (/,/^);/p" "$1" \
+		| sed 's/--.*$//' \
+		| tr -s ' \t\n' ' ' \
+		| sed 's/ *$//'
+}
+
+echo "== checking db-adapter's SQL fixture against $INFRA/postgres"
+FIXTURE="$REPOS/db-adapter/src/test/resources/init.sql"
+
+if [ ! -f "$FIXTURE" ]; then
+	fail "missing SQL fixture $FIXTURE"
+else
+	# table:source-file pairs. Add a row when an adapter starts using a table.
+	for pair in "interns:01-interns.sql" "records:03-records.sql"; do
+		table="${pair%%:*}"
+		source_file="$INFRA/postgres/${pair#*:}"
+
+		real=$(normalized_table "$source_file" "$table")
+		copy=$(normalized_table "$FIXTURE" "$table")
+
+		if [ -z "$real" ]; then
+			fail "table '$table' not found in $source_file -- the gate is checking a table that moved"
+		elif [ -z "$copy" ]; then
+			fail "table '$table' is missing from $FIXTURE -- db-adapter's tests would run without it"
+		elif [ "$real" != "$copy" ]; then
+			fail "table '$table' in $FIXTURE has drifted from $source_file"
+		else
+			echo "  ok  db-adapter fixture: $table"
+		fi
+	done
+fi
+
 # --- 1. the envelope ---------------------------------------------------------
 
 echo "== checking $ENVELOPE against subject $SUBJECT"
