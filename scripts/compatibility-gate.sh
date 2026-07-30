@@ -164,22 +164,38 @@ pipeline_of() {
 	sed "s/$2/ADAPTER/g" "$file"
 }
 
+# Every adapter type, including ones added after this check was written. A repo
+# that is not checked out is skipped rather than failed: the adapters are
+# separate repositories and nobody is obliged to have all of them.
+ADAPTERS="db-adapter:dbadapter file-adapter:fileadapter webhook-adapter:webhookadapter"
+
 for class in RecordPipeline RecordEnvelope IdempotencyGate TargetWriter; do
-	a=$(pipeline_of "db-adapter" "dbadapter" "$class")
-	b=$(pipeline_of "file-adapter" "fileadapter" "$class")
+	reference=""
+	reference_name=""
 
-	case "$a$b" in
-		*__MISSING__*)
-			fail "pipeline class '$class' is missing from an adapter -- every adapter type carries the whole shape"
-			continue
-			;;
-	esac
+	for adapter in $ADAPTERS; do
+		repo="${adapter%%:*}"
+		pkg="${adapter#*:}"
+		[ -d "$REPOS/$repo" ] || continue
 
-	if [ "$a" != "$b" ]; then
-		fail "pipeline class '$class' has drifted between db-adapter and file-adapter -- one adapter's reliability guarantees are no longer the other's"
-	else
-		echo "  ok  pipeline: $class"
-	fi
+		copy=$(pipeline_of "$repo" "$pkg" "$class")
+
+		case "$copy" in
+			*__MISSING__*)
+				fail "pipeline class '$class' is missing from $repo -- every adapter type carries the whole shape"
+				continue
+				;;
+		esac
+
+		if [ -z "$reference" ]; then
+			reference="$copy"
+			reference_name="$repo"
+		elif [ "$reference" != "$copy" ]; then
+			fail "pipeline class '$class' has drifted between $reference_name and $repo -- one adapter's reliability guarantees are no longer the other's"
+		fi
+	done
+
+	[ -n "$reference" ] && echo "  ok  pipeline: $class"
 done
 
 # --- 1. the envelope ---------------------------------------------------------
