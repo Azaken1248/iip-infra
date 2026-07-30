@@ -138,6 +138,50 @@ check_fixture "contract-registry" "$REPOS/contract-registry/src/test/resources/r
 	"contracts:02-registry.sql" "adapter_attachments:02-registry.sql" \
 	"adapter_types:05-adapter-types.sql"
 
+# --- 0c. the generic adapter pattern (Phase 6.2) ------------------------------
+#
+# Architecture §6 calls its pipeline diagram "the acceptance checklist for any
+# new adapter", and every adapter carries a copy of that pipeline rather than a
+# dependency on a shared jar -- deliberately, since this platform has no
+# artifact repository and UC-9's promise is that a new adapter type is a new
+# service, not a new service plus a versioned dependency on ours.
+#
+# The cost of that choice is that the copies can drift, and a drifted copy is a
+# reliability guarantee quietly lost in one adapter. So the copies are compared
+# here, modulo the package name that is the only legitimate difference between
+# them. Phase 6.10's acceptance suite checks that each adapter *behaves*
+# correctly; this checks that they are still the same shape.
+
+echo "== checking the generic adapter pipeline is identical across adapters"
+
+pipeline_of() {
+	# $1 = repo dir, $2 = package segment, $3 = class
+	file="$REPOS/$1/src/main/java/com/iip/$2/pipeline/$3.java"
+	if [ ! -f "$file" ]; then
+		echo "__MISSING__$file"
+		return
+	fi
+	sed "s/$2/ADAPTER/g" "$file"
+}
+
+for class in RecordPipeline RecordEnvelope IdempotencyGate TargetWriter; do
+	a=$(pipeline_of "db-adapter" "dbadapter" "$class")
+	b=$(pipeline_of "file-adapter" "fileadapter" "$class")
+
+	case "$a$b" in
+		*__MISSING__*)
+			fail "pipeline class '$class' is missing from an adapter -- every adapter type carries the whole shape"
+			continue
+			;;
+	esac
+
+	if [ "$a" != "$b" ]; then
+		fail "pipeline class '$class' has drifted between db-adapter and file-adapter -- one adapter's reliability guarantees are no longer the other's"
+	else
+		echo "  ok  pipeline: $class"
+	fi
+done
+
 # --- 1. the envelope ---------------------------------------------------------
 
 echo "== checking $ENVELOPE against subject $SUBJECT"
