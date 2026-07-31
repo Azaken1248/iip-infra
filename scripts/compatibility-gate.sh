@@ -198,6 +198,46 @@ for class in RecordPipeline RecordEnvelope IdempotencyGate TargetWriter; do
 	[ -n "$reference" ] && echo "  ok  pipeline: $class"
 done
 
+# Phase 6.10's acceptance suite, by the same rule and for a sharper reason. The
+# gate above proves the adapters still have the same pipeline; this one proves
+# they are still being held to the same standard. A weakened copy of the
+# checklist in one repo is worse than a drifted pipeline, because it is the
+# thing that would have caught the drifted pipeline.
+echo "== checking the adapter acceptance suite is identical across adapters"
+
+suite_of() {
+	file="$REPOS/$1/src/test/java/com/iip/$2/acceptance/AdapterAcceptanceSuite.java"
+	if [ ! -f "$file" ]; then
+		echo "__MISSING__$file"
+		return
+	fi
+	sed "s/$2/ADAPTER/g" "$file"
+}
+
+reference=""
+reference_name=""
+for adapter in $ADAPTERS; do
+	repo="${adapter%%:*}"
+	pkg="${adapter#*:}"
+	[ -d "$REPOS/$repo" ] || continue
+
+	copy=$(suite_of "$repo" "$pkg")
+	case "$copy" in
+		*__MISSING__*)
+			fail "$repo has no acceptance suite -- every adapter type must be held to the same checklist"
+			continue
+			;;
+	esac
+
+	if [ -z "$reference" ]; then
+		reference="$copy"
+		reference_name="$repo"
+	elif [ "$reference" != "$copy" ]; then
+		fail "the acceptance suite has drifted between $reference_name and $repo -- one adapter is being held to a different standard than the others"
+	fi
+done
+[ -n "$reference" ] && echo "  ok  acceptance suite identical across adapters"
+
 # --- 1. the envelope ---------------------------------------------------------
 
 echo "== checking $ENVELOPE against subject $SUBJECT"
