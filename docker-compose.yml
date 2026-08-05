@@ -166,9 +166,15 @@ services:
       # https://iip.azaken.com), so its origin is not localhost and has to be
       # listed here -- without it the browser blocks every control-plane write
       # with a CORS error that says nothing about which origin was missing.
-      # CONTROL_PLANE_ORIGIN appends a further one, for a preview deployment or
-      # a second front end.
-      CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-http://localhost:5173,http://localhost:3000,https://iip.azaken.com}${CONTROL_PLANE_ORIGIN:+,${CONTROL_PLANE_ORIGIN}}
+      # This was briefly written as a base value plus a ${CONTROL_PLANE_ORIGIN:+,...}
+      # suffix, so that a preview deployment could add one origin without
+      # restating the rest. It is gone: `:+` and nested `${}` are Compose-v2-only
+      # syntax, and on Compose v1 the whole file fails to parse with
+      # "Invalid interpolation format" -- an error about the file, not about the
+      # one service that needed it. A second origin goes in CORS_ALLOWED_ORIGINS,
+      # comma-separated, which is how the other three services have always
+      # taken it.
+      CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-http://localhost:5173,http://localhost:3000,https://iip.azaken.com}
     ports:
       - "${CONTRACT_REGISTRY_HOST_PORT:-8083}:8083"
     depends_on:
